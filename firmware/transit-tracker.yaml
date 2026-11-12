@@ -647,6 +647,13 @@ time:
 web_server:
   version: 3
 
+color:
+  - id: "c_28813F"
+    hex: "28813F"
+  - id: "c_007CAD"
+    hex: "007CAD"
+
+
 transit_tracker:
   id: tracker
   base_url: "wss://tt.horner.tj/"
@@ -655,7 +662,6 @@ transit_tracker:
   show_units: "short"
   list_mode: "sequential"
   scroll_headsigns: false
-  min_arrival_minutes: 8
   stops:
     - stop_id: "st:40_99610"
       routes:

@@ -5,6 +5,11 @@ substitutions:
   pixolletta_file_path: "https://raw.githubusercontent.com/EastsideUrbanism/transit-tracker/main/firmware/fonts/Pixolletta8px.ttf"
 
 esphome:
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: fetch_weather
+      - script.execute: rotate_pages
   name: ${name}
   friendly_name: ${friendly_name}
   name_add_mac_suffix: true
@@ -31,6 +36,21 @@ globals:
   - id: ota_progress
     type: float
     restore_value: false
+
+  - id: weather_temperature
+    type: float
+    restore_value: no
+    initial_value: '0.0'
+
+  - id: weather_code
+    type: int
+    restore_value: no
+    initial_value: '-1'
+
+  - id: weather_valid
+    type: bool
+    restore_value: no
+    initial_value: 'false'
 
 external_components:
   # This pin can be removed once the changes from this
@@ -288,7 +308,23 @@ status_led:
   pin:
     number: GPIO13
 
+interval:
+  - interval: 5min
+    then:
+      - script.execute: fetch_weather
+
 script:
+  - id: rotate_pages
+    mode: restart
+    then:
+      - while:
+          condition:
+            lambda: return true;
+          then:
+            - display.page.show: weather_page
+            - delay: 10s
+            - display.page.show: transit_schedule
+            - delay: 15s
   - id: dim_display
     parameters:
       up: bool
@@ -297,6 +333,39 @@ script:
           id: display_brightness
           relative_brightness: !lambda "return up ? 0.2 : -0.2;"
           transition_length: 0.1s
+  - id: fetch_weather
+    then:
+      - http_request.get:
+          url: "https://api.open-meteo.com/v1/forecast?latitude=47.6231&longitude=-122.3212&current=temperature_2m,weather_code&temperature_unit=fahrenheit&timezone=America%2FLos_Angeles"
+          capture_response: true
+          max_response_buffer_size: 2048
+          on_response:
+            then:
+              - if:
+                  condition:
+                    lambda: return response->status_code == 200;
+                  then:
+                    - lambda: |-
+                        json::parse_json(body, [](JsonObject root) -> bool {
+                          if (root["current"]["temperature_2m"].isNull() ||
+                              root["current"]["weather_code"].isNull()) {
+                            return false;
+                          }
+
+                          id(weather_temperature) =
+                            root["current"]["temperature_2m"].as<float>();
+
+                          id(weather_code) =
+                            root["current"]["weather_code"].as<int>();
+
+                          id(weather_valid) = true;
+                          return true;
+                        });
+                  else:
+                    - logger.log: "Weather API returned an error"
+          on_error:
+            then:
+              - logger.log: "Weather request failed"
   - id: update_firmware
     then:
       - if:
@@ -456,6 +525,86 @@ display:
       - id: transit_schedule
         lambda: |-
           id(tracker).draw_schedule();
+      - id: weather_page
+        lambda: |-
+          if (!id(weather_valid)) {
+            it.printf(32, 16, id(pixolletta), COLOR_ON,
+                      TextAlign::CENTER, "Loading weather");
+            return;
+          }
+
+          int code = id(weather_code);
+
+          // Weather descriptions and icon colors
+          const char *description = "Unknown";
+          Color icon_color = Color(255, 200, 40);
+
+          if (code == 0) {
+            description = "Clear";
+          } else if (code == 1) {
+            description = "Mostly Sun";
+          } else if (code == 2) {
+            description = "Partly Cl";
+          } else if (code == 3) {
+            description = "Overcast";
+            icon_color = Color(180, 190, 205);
+          } else if (code == 45 || code == 48) {
+            description = "Fog";
+            icon_color = Color(180, 190, 205);
+          } else if (code >= 51 && code <= 57) {
+            description = "Drizzle";
+            icon_color = Color(80, 180, 255);
+          } else if (code >= 61 && code <= 67) {
+            description = "Rain";
+            icon_color = Color(60, 150, 255);
+          } else if (code >= 71 && code <= 77) {
+            description = "Snow";
+            icon_color = Color(220, 240, 255);
+          } else if (code >= 80 && code <= 82) {
+            description = "Showers";
+            icon_color = Color(60, 150, 255);
+          } else if (code >= 85 && code <= 86) {
+            description = "Snow";
+            icon_color = Color(220, 240, 255);
+          } else if (code >= 95) {
+            description = "Thunder";
+            icon_color = Color(255, 210, 40);
+          }
+
+          // Draw a larger sun or cloud icon on the left
+          if (code <= 1) {
+            // Sun
+            it.filled_circle(15, 13, 6, icon_color);
+            it.line(15, 3, 15, 5, icon_color);
+            it.line(15, 21, 15, 23, icon_color);
+            it.line(5, 13, 7, 13, icon_color);
+            it.line(23, 13, 25, 13, icon_color);
+            it.line(8, 6, 10, 8, icon_color);
+            it.line(20, 18, 22, 20, icon_color);
+          } else {
+            // Cloud
+            it.filled_circle(11, 13, 5, icon_color);
+            it.filled_circle(17, 10, 7, icon_color);
+            it.filled_circle(23, 14, 4, icon_color);
+            it.filled_rectangle(8, 13, 19, 7, icon_color);
+
+            // Rain drops
+            if ((code >= 51 && code <= 67) ||
+                (code >= 80 && code <= 82)) {
+              Color rain_color = Color(60, 150, 255);
+              it.line(11, 22, 9, 25, rain_color);
+              it.line(18, 22, 16, 25, rain_color);
+            }
+          }
+
+          // Temperature on the right
+          it.printf(44, 13, id(pixolletta), COLOR_ON,
+                    TextAlign::CENTER, "%.0fF",
+                    id(weather_temperature));
+
+          // Short weather description along the bottom
+          it.printf(32, 28, id(pixolletta), COLOR_ON,
+                    TextAlign::CENTER, "%s", description);
       - id: ip_address_page
         lambda: |-
           int x = it.get_width() / 2;

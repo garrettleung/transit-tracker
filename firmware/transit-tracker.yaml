@@ -60,15 +60,15 @@ external_components:
     components: [ hub75 ]
   - source: github://tjhorner/esphome-custom-components@157c1c216ab296fd2cecc197728f9cbb909344d3
     components: [ serial_rpc, lis3dh, project_version ]
-  - source: github://tjhorner/esphome-transit-tracker@c54676e5fa0ad1aaccd9a5e047d2f642a4a53629
+  - source: github://garrettleung/esphome-transit-tracker@main
 
 logger:
   level: DEBUG
 
 wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
   power_save_mode: none
-  ap:
-    password: "hunter2hunter2"
 
 captive_portal:
 
@@ -647,7 +647,37 @@ time:
 web_server:
   version: 3
 
+color:
+  - id: "c_28813F"
+    hex: "28813F"
+  - id: "c_007CAD"
+    hex: "007CAD"
+
+
 transit_tracker:
   id: tracker
+  base_url: "wss://tt.horner.tj/"
+  limit: 3
+  time_display: "arrival"
+  show_units: "short"
+  list_mode: "sequential"
+  scroll_headsigns: false
+  stops:
+    - stop_id: "st:40_99610"
+      routes:
+        - "st:40_100479"
+        - "st:40_2LINE"
+    - stop_id: "st:40_99603"
+      routes:
+        - "st:40_2LINE"
+        - "st:40_100479"
+  styles:
+    - route_id: "st:40_100479"
+      name: "1"
+      color: "c_28813F"
+    - route_id: "st:40_2LINE"
+      name: "2"
+      color: "c_007CAD"
+  abbreviations: []
 
 serial_rpc:

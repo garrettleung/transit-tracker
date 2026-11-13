@@ -8,8 +8,18 @@ esphome:
   on_boot:
     priority: -100
     then:
-      - script.execute: fetch_weather
       - script.execute: rotate_pages
+      - lambda: |-
+          id(tracker).set_dimness(id(color_dimness));
+      - wait_until:
+          condition:
+            wifi.connected:
+          timeout: 30s
+      - if:
+          condition:
+            wifi.connected:
+          then:
+            - script.execute: fetch_weather
   name: ${name}
   friendly_name: ${friendly_name}
   name_add_mac_suffix: true
@@ -33,6 +43,11 @@ psram:
   speed: 80MHz
 
 globals:
+  - id: color_dimness
+    type: float
+    restore_value: yes
+    initial_value: '0.5'
+
   - id: ota_progress
     type: float
     restore_value: false
@@ -60,7 +75,8 @@ external_components:
     components: [ hub75 ]
   - source: github://tjhorner/esphome-custom-components@157c1c216ab296fd2cecc197728f9cbb909344d3
     components: [ serial_rpc, lis3dh, project_version ]
-  - source: github://garrettleung/esphome-transit-tracker@main
+  - source: github://garrettleung/esphome-transit-tracker/tree/filter-walking
+    refresh: 0s
 
 logger:
   level: DEBUG
@@ -313,6 +329,24 @@ interval:
     then:
       - script.execute: fetch_weather
 
+number:
+  - platform: template
+    name: "Display Color Dimness"
+    id: display_color_dimness
+    icon: "mdi:brightness-6"
+    entity_category: "config"
+    min_value: 0
+    max_value: 100
+    step: 5
+    initial_value: 20
+    optimistic: true
+    restore_value: true
+    set_action:
+      - lambda: |-
+          float dimness = x / 100.0f;
+          id(color_dimness) = dimness;
+          id(tracker).set_dimness(dimness);
+          id(matrix).update();
 script:
   - id: rotate_pages
     mode: restart
@@ -527,115 +561,213 @@ display:
           id(tracker).draw_schedule();
       - id: weather_page
         lambda: |-
+          auto dim_color = [](Color color, float dimness) -> Color {
+            return Color(
+              static_cast<uint8_t>(color.r * dimness),
+              static_cast<uint8_t>(color.g * dimness),
+              static_cast<uint8_t>(color.b * dimness)
+            );
+          };
+
+          float dimness = id(color_dimness);
+
           if (!id(weather_valid)) {
-            it.printf(32, 16, id(pixolletta), COLOR_ON,
+            it.printf(63, 16, id(pixolletta),
+                      dim_color(Color(255, 255, 255), dimness),
                       TextAlign::CENTER, "Loading weather");
             return;
           }
 
           int code = id(weather_code);
 
-          // Weather descriptions and icon colors
           const char *description = "Unknown";
           Color icon_color = Color(255, 200, 40);
 
+         
+
           if (code == 0) {
-            description = "Clear";
-          } else if (code == 1) {
-            description = "Mostly Sun";
-          } else if (code == 2) {
-            description = "Partly Cl";
+            description = "Clear sky";
+            // Clear - sun
+            it.filled_circle(13, 15, 6, icon_color);
+            it.line(13, 3, 12, 5, icon_color);
+            it.line(13, 25, 12, 27, icon_color);
+            it.line(2, 15, 4, 15, icon_color);
+            it.line(21, 15, 23, 15, icon_color);
+            it.line(6, 8, 7, 10, icon_color);
+            it.line(18, 20, 19, 22, icon_color);
+            it.line(6, 22, 7, 20, icon_color);
+            it.line(17, 10, 19, 8, icon_color);
+
+          } else if (code == 1 || code == 2) {
+            description = "Partly cloudy";
+            // Mostly sunny / partly cloudy
+            it.filled_circle(9, 11, 4, icon_color);
+            it.line(9, 4, 8, 5, icon_color);
+            it.line(3, 11, 4, 11, icon_color);
+
+            Color cloud = dim_color(Color(210, 220, 230), dimness);
+            it.filled_circle(13, 16, 5, cloud);
+            it.filled_circle(20, 17, 4, cloud);
+            it.filled_rectangle(12, 15, 14, 6, cloud);
+
           } else if (code == 3) {
             description = "Overcast";
-            icon_color = Color(180, 190, 205);
+            // Overcast
+            Color cloud = dim_color(Color(220, 220, 220), dimness);
+            it.filled_circle(7, 15, 5, cloud);
+            it.filled_circle(14, 12, 7, cloud);
+            it.filled_circle(21, 16, 5, cloud);
+            it.filled_rectangle(5, 15, 23, 7, cloud);
+
           } else if (code == 45 || code == 48) {
             description = "Fog";
-            icon_color = Color(180, 190, 205);
+            // Fog
+            Color fog = dim_color(Color(220, 220, 220), dimness);
+            it.line(3, 10, 24, 10, fog);
+            it.line(5, 15, 26, 15, fog);
+            it.line(3, 20, 24, 20, fog);
+
           } else if (code >= 51 && code <= 57) {
             description = "Drizzle";
-            icon_color = Color(80, 180, 255);
+            // Drizzle
+            Color cloud = dim_color(Color(190, 205, 220), dimness);
+            Color rain = dim_color(Color(80, 180, 255), dimness);
+            it.filled_circle(7, 13, 5, cloud);
+            it.filled_circle(14, 11, 7, cloud);
+            it.filled_circle(21, 14, 5, cloud);
+            it.filled_rectangle(5, 13, 23, 7, cloud);
+            it.line(8, 23, 7, 25, rain);
+            it.line(16, 23, 15, 25, rain);
+            it.line(23, 23, 22, 25, rain);
+
           } else if (code >= 61 && code <= 67) {
             description = "Rain";
-            icon_color = Color(60, 150, 255);
+            // Rain
+            Color cloud = dim_color(Color(170, 185, 205), dimness);
+            Color rain = dim_color(Color(60, 150, 255), dimness);
+            it.filled_circle(7, 13, 5, cloud);
+            it.filled_circle(14, 11, 7, cloud);
+            it.filled_circle(21, 14, 5, cloud);
+            it.filled_rectangle(5, 13, 23, 7, cloud);
+            it.line(8, 22, 5, 26, rain);
+            it.line(16, 22, 13, 26, rain);
+            it.line(23, 22, 20, 26, rain);
+
           } else if (code >= 71 && code <= 77) {
-            description = "Snow";
-            icon_color = Color(220, 240, 255);
+            description = "Snowfall";
+            // Snow
+            Color cloud = dim_color(Color(190, 205, 220), dimness);
+            Color snow = dim_color(Color(220, 240, 255), dimness);
+            it.filled_circle(7, 12, 5, cloud);
+            it.filled_circle(14, 10, 7, cloud);
+            it.filled_circle(21, 13, 5, cloud);
+            it.filled_rectangle(5, 12, 23, 7, cloud);
+            it.filled_circle(7, 24, 1, snow);
+            it.filled_circle(16, 24, 1, snow);
+            it.filled_circle(22, 24, 1, snow);
+
           } else if (code >= 80 && code <= 82) {
-            description = "Showers";
-            icon_color = Color(60, 150, 255);
+            description = "Rain showers";
+            // Showers
+            Color cloud = dim_color(Color(185, 195, 210), dimness);
+            Color rain = dim_color(Color(60, 150, 255), dimness);
+            it.filled_circle(7, 13, 5, cloud);
+            it.filled_circle(14, 11, 7, cloud);
+            it.filled_circle(21, 14, 5, cloud);
+            it.filled_rectangle(5, 13, 23, 7, cloud);
+            it.line(9, 22, 6, 26, rain);
+            it.line(20, 22, 17, 26, rain);
+
           } else if (code >= 85 && code <= 86) {
-            description = "Snow";
-            icon_color = Color(220, 240, 255);
+            description = "Snow showers";
+            // Snow showers
+            Color cloud = dim_color(Color(185, 195, 210), dimness);
+            Color snow = dim_color(Color(220, 240, 255), dimness);
+            it.filled_circle(7, 12, 5, cloud);
+            it.filled_circle(14, 10, 7, cloud);
+            it.filled_circle(21, 13, 5, cloud);
+            it.filled_rectangle(5, 12, 23, 7, cloud);
+            it.filled_circle(9, 24, 1, snow);
+            it.filled_circle(20, 24, 1, snow);
+
           } else if (code >= 95) {
-            description = "Thunder";
-            icon_color = Color(255, 210, 40);
+            description = "Thunderstorm";
+            // Thunderstorm
+            Color cloud = dim_color(Color(180, 185, 205), dimness);
+            Color lightning = dim_color(Color(255, 210, 40), dimness);
+            it.filled_circle(7, 12, 5, cloud);
+            it.filled_circle(14, 10, 7, cloud);
+            it.filled_circle(21, 13, 5, cloud);
+            it.filled_rectangle(5, 12, 23, 7, cloud);
+            it.filled_rectangle(14, 19, 4, 2, lightning);
+            it.line(16, 21, 12, 25, lightning);
+            it.line(12, 25, 15, 25, lightning);
+            it.line(16, 25, 13, 29, lightning);
           }
 
-          // Draw a larger sun or cloud icon on the left
-          if (code <= 1) {
-            // Sun
-            it.filled_circle(15, 13, 6, icon_color);
-            it.line(15, 3, 15, 5, icon_color);
-            it.line(15, 21, 15, 23, icon_color);
-            it.line(5, 13, 7, 13, icon_color);
-            it.line(23, 13, 25, 13, icon_color);
-            it.line(8, 6, 10, 8, icon_color);
-            it.line(20, 18, 22, 20, icon_color);
-          } else {
-            // Cloud
-            it.filled_circle(11, 13, 5, icon_color);
-            it.filled_circle(17, 10, 7, icon_color);
-            it.filled_circle(23, 14, 4, icon_color);
-            it.filled_rectangle(8, 13, 19, 7, icon_color);
+          // Temperature in the center, with degree symbol
+          it.printf(33, 13, id(pixolletta),
+                    dim_color(Color(255, 255, 255), dimness),
+                    TextAlign::LEFT, "%.0f°F  %s",
+                    id(weather_temperature), description);
 
-            // Rain drops
-            if ((code >= 51 && code <= 67) ||
-                (code >= 80 && code <= 82)) {
-              Color rain_color = Color(60, 150, 255);
-              it.line(11, 22, 9, 25, rain_color);
-              it.line(18, 22, 16, 25, rain_color);
-            }
-          }
-
-          // Temperature on the right
-          it.printf(44, 13, id(pixolletta), COLOR_ON,
-                    TextAlign::CENTER, "%.0fF",
-                    id(weather_temperature));
-
-          // Short weather description along the bottom
-          it.printf(32, 28, id(pixolletta), COLOR_ON,
-                    TextAlign::CENTER, "%s", description);
       - id: ip_address_page
         lambda: |-
+          auto dim_color = [](Color color, float dimness) -> Color {
+            return Color(
+              color.r * dimness,
+              color.g * dimness,
+              color.b * dimness
+            );
+          };
+
+          float dimness = id(color_dimness);
+          Color text_color = dim_color(Color(255, 255, 255), dimness);
           int x = it.get_width() / 2;
           int y = it.get_height() / 2;
 
           auto ip_addresses = ::esphome::network::get_ip_addresses();
           if (ip_addresses.empty()) {
-            it.printf(x, y, id(pixolletta), COLOR_ON, TextAlign::CENTER, "No IP Address");
+            it.printf(x, y, id(pixolletta), dim_color(Color(255, 255, 255), dimness), TextAlign::CENTER, "No IP Address");
             return;
           }
 
           char ip_address[esphome::network::IP_ADDRESS_BUFFER_SIZE];
           ip_addresses[0].str_to(ip_address);
-          it.printf(x, y, id(pixolletta), COLOR_ON, TextAlign::CENTER, "%s", ip_address);
+          it.printf(x, y, id(pixolletta), dim_color(Color(255, 255, 255), dimness), TextAlign::CENTER, "%s", ip_address);
       - id: ota_progress_page
         lambda: |-
+          auto dim_color = [](Color color, float dimness) -> Color {
+            return Color(
+              static_cast<uint8_t>(color.r * dimness),
+              static_cast<uint8_t>(color.g * dimness),
+              static_cast<uint8_t>(color.b * dimness)
+            );
+          };
+
+          float dimness = id(color_dimness);
+
           int x = it.get_width() / 2;
           int y = it.get_height() / 2;
 
           int y1 = y - 5;
           int y2 = y + 6;
 
-          it.printf(x, y1, id(pixolletta), Color(0x252627), TextAlign::CENTER, "Updating firmware...");
-          it.printf(x, y2, id(pixolletta), Color(0x252627), TextAlign::CENTER, "%.0f%% complete", id(ota_progress));
+          it.printf(x, y1, id(pixolletta),
+                    dim_color(Color(255, 255, 255), dimness),
+                    TextAlign::CENTER, "Updating firmware...");
+
+          it.printf(x, y2, id(pixolletta),
+                    dim_color(Color(255, 255, 255), dimness),
+                    TextAlign::CENTER, "%.0f%% complete",
+                    id(ota_progress));
 
 font:
   - file: ${pixolletta_file_path}
     id: pixolletta
     size: 10
     glyphs:
-      - abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:;!?()"'-+/*=%@#[]{}<>|&^~
+      - abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:;!?()"'-+/*=%@#[]{}<>|&^~°
       - ÄËÏÖÜÉÈÔäëïöüéèôŊŋÁÊÎÛÝáêîûýĜĝÀÌÒàìòÑñÍÓÚíóúÇçĆČĐŠŽćčđšžÙùÕõŞŁŇŘşłňřÅåØøĀĒĪŌŪāēīōūÂâĞğıĎĚŤŮďěťůÆæĲĳŒœÐðŸÿßŐŰőűÞþÃãĂĔĬŎŬăĕĭŏŭĨŨĩũĄĘŃŚŻąęńśżĖėĢĶĻŅģķļņĮŲįųŔŹŕźĊĠċġħŜŝŢţŦŧŴŵŶŷĹĽĺľİ
       - " "
 
@@ -653,11 +785,10 @@ color:
   - id: "c_007CAD"
     hex: "007CAD"
 
-
 transit_tracker:
   id: tracker
   base_url: "wss://tt.horner.tj/"
-  limit: 3
+  limit: 20
   time_display: "arrival"
   show_units: "short"
   list_mode: "sequential"
